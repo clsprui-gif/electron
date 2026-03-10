@@ -20,6 +20,7 @@ index fee622ebde42211de6f702b754cfa38595df5a1c..9f7e1b1b8d871721891255c1f21de825
 +  kElectronDataPipeHolder,              // electron::api::DataPipeHolder
 +  kElectronDebugger,                    // electron::api::Debugger
 +  kElectronEvent,                       // gin_helper::internal::Event
++  kElectronGlobalShortcut,              // electron::api::GlobalShortcut
 +  kElectronMenu,                        // electron::api::Menu
 +  kElectronNetLog,                      // electron::api::NetLog
 +  kElectronPowerMonitor,                // electron::api::PowerMonitor
