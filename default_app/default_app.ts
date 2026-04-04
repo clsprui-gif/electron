@@ -11,7 +11,7 @@ app.on('window-all-closed', () => {
   app.quit();
 });
 
-function decorateURL (url: string) {
+function decorateURL(url: string) {
   // safely add `?utm_source=default_app
   const parsedUrl = new URL(url);
   parsedUrl.searchParams.append('utm_source', 'default_app');
@@ -21,13 +21,12 @@ function decorateURL (url: string) {
 // Find the shortest path to the electron binary
 const absoluteElectronPath = process.execPath;
 const relativeElectronPath = path.relative(process.cwd(), absoluteElectronPath);
-const electronPath = absoluteElectronPath.length < relativeElectronPath.length
-  ? absoluteElectronPath
-  : relativeElectronPath;
+const electronPath =
+  absoluteElectronPath.length < relativeElectronPath.length ? absoluteElectronPath : relativeElectronPath;
 
 const indexPath = path.resolve(app.getAppPath(), 'index.html');
 
-function isTrustedSender (webContents: Electron.WebContents) {
+function isTrustedSender(webContents: Electron.WebContents) {
   if (webContents !== (mainWindow && mainWindow.webContents)) {
     return false;
   }
@@ -43,7 +42,7 @@ ipcMain.handle('bootstrap', (event) => {
   return isTrustedSender(event.sender) ? electronPath : null;
 });
 
-async function createWindow (backgroundColor?: string) {
+async function createWindow(backgroundColor?: string) {
   await app.whenReady();
 
   const options: Electron.BrowserWindowConstructorOptions = {
@@ -68,7 +67,7 @@ async function createWindow (backgroundColor?: string) {
   mainWindow = new BrowserWindow(options);
   mainWindow.on('ready-to-show', () => mainWindow!.show());
 
-  mainWindow.webContents.setWindowOpenHandler(details => {
+  mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(decorateURL(details.url));
     return { action: 'deny' };
   });

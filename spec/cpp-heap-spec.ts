@@ -27,13 +27,16 @@ describe('cpp heap', () => {
 
     it('should record as node in heap snapshot', async () => {
       const { remotely } = await startRemoteControlApp(['--expose-internals']);
-      const result = await remotely(async (heap: string, snapshotHelper: string) => {
-        const { recordState } = require(heap);
-        const { containsRetainingPath } = require(snapshotHelper);
-        const state = recordState();
-        return containsRetainingPath(state.snapshot, ['C++ Persistent roots', 'Electron / App']);
-      }, path.join(__dirname, '../../third_party/electron_node/test/common/heap'),
-      path.join(__dirname, 'lib', 'heapsnapshot-helpers.js'));
+      const result = await remotely(
+        async (heap: string, snapshotHelper: string) => {
+          const { recordState } = require(heap);
+          const { containsRetainingPath } = require(snapshotHelper);
+          const state = recordState();
+          return containsRetainingPath(state.snapshot, ['C++ Persistent roots', 'Electron / App']);
+        },
+        path.join(__dirname, '../../third_party/electron_node/test/common/heap'),
+        path.join(__dirname, 'lib', 'heapsnapshot-helpers.js')
+      );
       expect(result).to.equal(true);
     });
   });
@@ -41,38 +44,45 @@ describe('cpp heap', () => {
   describe('session module', () => {
     it('should record as node in heap snapshot', async () => {
       const { remotely } = await startRemoteControlApp(['--expose-internals']);
-      const result = await remotely(async (heap: string, snapshotHelper: string) => {
-        const { session, BrowserWindow } = require('electron');
-        const { once } = require('node:events');
-        const assert = require('node:assert');
-        const { recordState } = require(heap);
-        const { containsRetainingPath } = require(snapshotHelper);
-        const session1 = session.defaultSession;
-        console.log(session1.getStoragePath());
-        const session2 = session.fromPartition('cppheap1');
-        const session3 = session.fromPartition('cppheap1');
-        const session4 = session.fromPartition('cppheap2');
-        console.log(session2.cookies);
-        assert.strictEqual(session2, session3);
-        assert.notStrictEqual(session2, session4);
-        const w = new BrowserWindow({
-          show: false,
-          webPreferences: {
-            session: session.fromPartition('cppheap1')
-          }
-        });
-        await w.loadURL('about:blank');
-        const state = recordState();
-        const isClosed = once(w, 'closed');
-        w.destroy();
-        await isClosed;
-        const numSessions = containsRetainingPath(state.snapshot, ['C++ Persistent roots', 'Electron / Session'], {
-          occurrences: 4
-        });
-        const canTraceJSReferences = containsRetainingPath(state.snapshot, ['C++ Persistent roots', 'Electron / Session', 'Cookies']);
-        return numSessions && canTraceJSReferences;
-      }, path.join(__dirname, '../../third_party/electron_node/test/common/heap'),
-      path.join(__dirname, 'lib', 'heapsnapshot-helpers.js'));
+      const result = await remotely(
+        async (heap: string, snapshotHelper: string) => {
+          const { session, BrowserWindow } = require('electron');
+          const { once } = require('node:events');
+          const assert = require('node:assert');
+          const { recordState } = require(heap);
+          const { containsRetainingPath } = require(snapshotHelper);
+          const session1 = session.defaultSession;
+          console.log(session1.getStoragePath());
+          const session2 = session.fromPartition('cppheap1');
+          const session3 = session.fromPartition('cppheap1');
+          const session4 = session.fromPartition('cppheap2');
+          console.log(session2.cookies);
+          assert.strictEqual(session2, session3);
+          assert.notStrictEqual(session2, session4);
+          const w = new BrowserWindow({
+            show: false,
+            webPreferences: {
+              session: session.fromPartition('cppheap1')
+            }
+          });
+          await w.loadURL('about:blank');
+          const state = recordState();
+          const isClosed = once(w, 'closed');
+          w.destroy();
+          await isClosed;
+          const numSessions = containsRetainingPath(state.snapshot, ['C++ Persistent roots', 'Electron / Session'], {
+            occurrences: 4
+          });
+          const canTraceJSReferences = containsRetainingPath(state.snapshot, [
+            'C++ Persistent roots',
+            'Electron / Session',
+            'Cookies'
+          ]);
+          return numSessions && canTraceJSReferences;
+        },
+        path.join(__dirname, '../../third_party/electron_node/test/common/heap'),
+        path.join(__dirname, 'lib', 'heapsnapshot-helpers.js')
+      );
       expect(result).to.equal(true);
     });
   });
@@ -88,7 +98,7 @@ describe('cpp heap', () => {
 
         const waitForGC = async (fn: () => boolean) => {
           for (let i = 0; i < 30; ++i) {
-            await new Promise(resolve => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 0));
             v8Util.requestGarbageCollectionForTesting();
             if (fn()) return true;
           }
@@ -96,7 +106,9 @@ describe('cpp heap', () => {
         };
 
         let callCount = 0;
-        let repeating: any = () => { callCount++; };
+        let repeating: any = () => {
+          callCount++;
+        };
         const repeatingWeakRef = new WeakRef(repeating);
         testingBinding.holdRepeatingCallbackForTesting(repeating);
         repeating = null;
@@ -126,7 +138,7 @@ describe('cpp heap', () => {
 
         const waitForGC = async (fn: () => boolean) => {
           for (let i = 0; i < 30; ++i) {
-            await new Promise(resolve => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 0));
             v8Util.requestGarbageCollectionForTesting();
             if (fn()) return true;
           }
@@ -134,7 +146,9 @@ describe('cpp heap', () => {
         };
 
         let callCount = 0;
-        let once: any = () => { callCount++; };
+        let once: any = () => {
+          callCount++;
+        };
         const onceWeakRef = new WeakRef(once);
         testingBinding.holdOnceCallbackForTesting(once);
         once = null;
@@ -162,7 +176,7 @@ describe('cpp heap', () => {
 
         const waitForGC = async (fn: () => boolean) => {
           for (let i = 0; i < 30; ++i) {
-            await new Promise(resolve => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 0));
             v8Util.requestGarbageCollectionForTesting();
             if (fn()) return true;
           }
@@ -199,7 +213,7 @@ describe('cpp heap', () => {
 
         const waitForGC = async (fn: () => boolean) => {
           for (let i = 0; i < 30; ++i) {
-            await new Promise(resolve => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 0));
             v8Util.requestGarbageCollectionForTesting();
             if (fn()) return true;
           }
@@ -237,14 +251,16 @@ describe('cpp heap', () => {
 
         const waitForGC = async (fn: () => boolean) => {
           for (let i = 0; i < 30; ++i) {
-            await new Promise(resolve => setTimeout(resolve, 0));
+            await new Promise((resolve) => setTimeout(resolve, 0));
             v8Util.requestGarbageCollectionForTesting();
             if (fn()) return true;
           }
           return false;
         };
 
-        let throwing: any = () => { throw new Error('expected test throw'); };
+        let throwing: any = () => {
+          throw new Error('expected test throw');
+        };
         const weakRef = new WeakRef(throwing);
         testingBinding.holdRepeatingCallbackForTesting(throwing);
         throwing = null;
@@ -265,25 +281,34 @@ describe('cpp heap', () => {
   describe('internal event', () => {
     it('should record as node in heap snapshot', async () => {
       const { remotely } = await startRemoteControlApp(['--expose-internals']);
-      const result = await remotely(async (heap: string, snapshotHelper: string) => {
-        const { BrowserWindow } = require('electron');
-        const { once } = require('node:events');
-        const { recordState } = require(heap);
-        const { containsRetainingPath } = require(snapshotHelper);
+      const result = await remotely(
+        async (heap: string, snapshotHelper: string) => {
+          const { BrowserWindow } = require('electron');
+          const { once } = require('node:events');
+          const { recordState } = require(heap);
+          const { containsRetainingPath } = require(snapshotHelper);
 
-        const w = new BrowserWindow({
-          show: false
-        });
-        await w.loadURL('about:blank');
-        const state = recordState();
-        const isClosed = once(w, 'closed');
-        w.destroy();
-        await isClosed;
-        const eventNativeStackReference = containsRetainingPath(state.snapshot, ['C++ native stack roots', 'Electron / Event']);
-        const noPersistentReference = !containsRetainingPath(state.snapshot, ['C++ Persistent roots', 'Electron / Event']);
-        return eventNativeStackReference && noPersistentReference;
-      }, path.join(__dirname, '../../third_party/electron_node/test/common/heap'),
-      path.join(__dirname, 'lib', 'heapsnapshot-helpers.js'));
+          const w = new BrowserWindow({
+            show: false
+          });
+          await w.loadURL('about:blank');
+          const state = recordState();
+          const isClosed = once(w, 'closed');
+          w.destroy();
+          await isClosed;
+          const eventNativeStackReference = containsRetainingPath(state.snapshot, [
+            'C++ native stack roots',
+            'Electron / Event'
+          ]);
+          const noPersistentReference = !containsRetainingPath(state.snapshot, [
+            'C++ Persistent roots',
+            'Electron / Event'
+          ]);
+          return eventNativeStackReference && noPersistentReference;
+        },
+        path.join(__dirname, '../../third_party/electron_node/test/common/heap'),
+        path.join(__dirname, 'lib', 'heapsnapshot-helpers.js')
+      );
       expect(result).to.equal(true);
     });
   });

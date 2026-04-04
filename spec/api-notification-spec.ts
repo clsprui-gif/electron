@@ -32,7 +32,9 @@ describe('Notification module', () => {
       body: 'body'
     });
 
-    expect(() => { (n as any).id = 'new-id'; }).to.throw();
+    expect(() => {
+      (n as any).id = 'new-id';
+    }).to.throw();
   });
 
   ifit(process.platform === 'darwin')('defaults id to a UUID when not provided', () => {
@@ -72,7 +74,9 @@ describe('Notification module', () => {
       groupId: 'E017VKL2N8H|C07RBMNS9EK'
     });
 
-    expect(() => { (n as any).groupId = 'new-group'; }).to.throw();
+    expect(() => {
+      (n as any).groupId = 'new-group';
+    }).to.throw();
   });
 
   ifit(process.platform === 'darwin')('defaults groupId to empty string when not provided', () => {
@@ -144,7 +148,8 @@ describe('Notification module', () => {
         {
           type: 'button',
           text: '1'
-        }, {
+        },
+        {
           type: 'button',
           text: '2'
         }
@@ -161,7 +166,8 @@ describe('Notification module', () => {
       {
         type: 'button',
         text: '3'
-      }, {
+      },
+      {
         type: 'button',
         text: '4'
       }
