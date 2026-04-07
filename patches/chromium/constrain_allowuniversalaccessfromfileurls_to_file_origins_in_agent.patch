@@ -1,0 +1,242 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Calvin Watford <cwatford@makenotion.com>
+Date: Mon, 6 Apr 2026 21:25:10 -0700
+Subject: Constrain AllowUniversalAccessFromFileURLs to file: origins in agent
+ assignment
+
+HasPotentialUniversalAccessPrivilege() was treating the
+AllowUniversalAccessFromFileURLs setting as unconditional, returning
+true for all origins regardless of scheme. This caused non-file origins
+(http://, https://) to lose their browser-provided AgentClusterKey when
+the setting was enabled, overriding it with a universal file agent key
+and routing them to universal_access_agent_ which carries no key.
+
+After https://crrev.com/c/7079680 moved cross-origin isolation status
+to the renderer's per-context agent cluster key, this caused
+self.crossOriginIsolated to return false even with COOP + COEP headers
+correctly set on non-file origins.
+
+The fix splits the single has_potential_universal_access_privilege
+boolean in WindowAgentFactory::GetAgentForAgentClusterKey() into two
+separate parameters:
+
+  - web_security_disabled: applies to all origins when web security is
+    off (--disable-web-security, --run-web-tests).
+  - allow_universal_access_from_file_urls: only takes effect for file:
+    scheme origins (those with IsUniversalFileAgent() agent cluster
+    keys), preserving their existing routing to universal_access_agent_.
+
+This aligns the agent assignment logic with the origin privilege
+granting code in the same file (DocumentLoader::CalculateOrigin), which
+already correctly gates AllowUniversalAccessFromFileURLs behind
+origin->IsLocal().
+
+Bug: 424351971
+Change-Id: I0000000000000000000000000000000000000000
+
+diff --git a/third_party/blink/renderer/core/execution_context/window_agent_factory.cc b/third_party/blink/renderer/core/execution_context/window_agent_factory.cc
+index 86ce2d493dc833dd1601787fc042b8a4a612fc2e..3545463602cce77030798bd39a0c8e2c854372e8 100644
+--- a/third_party/blink/renderer/core/execution_context/window_agent_factory.cc
++++ b/third_party/blink/renderer/core/execution_context/window_agent_factory.cc
+@@ -21,9 +21,10 @@ WindowAgentFactory::WindowAgentFactory(
+     : agent_group_scheduler_(agent_group_scheduler) {}
+ 
+ WindowAgent* WindowAgentFactory::GetAgentForAgentClusterKey(
+-    bool has_potential_universal_access_privilege,
++    bool web_security_disabled,
++    bool allow_universal_access_from_file_urls,
+     const AgentClusterKey& agent_cluster_key) {
+-  if (has_potential_universal_access_privilege) {
++  if (web_security_disabled) {
+     if (!universal_access_agent_) {
+       universal_access_agent_ =
+           MakeGarbageCollected<WindowAgent>(*agent_group_scheduler_);
+@@ -33,6 +34,13 @@ WindowAgent* WindowAgentFactory::GetAgentForAgentClusterKey(
+ 
+   // For `file:` scheme origins.
+   if (agent_cluster_key.IsUniversalFileAgent()) {
++    if (allow_universal_access_from_file_urls) {
++      if (!universal_access_agent_) {
++        universal_access_agent_ =
++            MakeGarbageCollected<WindowAgent>(*agent_group_scheduler_);
++      }
++      return universal_access_agent_.Get();
++    }
+     if (!file_url_agent_) {
+       file_url_agent_ = MakeGarbageCollected<WindowAgent>(
+           *agent_group_scheduler_, agent_cluster_key);
+diff --git a/third_party/blink/renderer/core/execution_context/window_agent_factory.h b/third_party/blink/renderer/core/execution_context/window_agent_factory.h
+index b5464975a3c365a29e342b0dd57a8a73a311924a..61a5a34f49985a1ea5b1aef04e76f05f255a00d0 100644
+--- a/third_party/blink/renderer/core/execution_context/window_agent_factory.h
++++ b/third_party/blink/renderer/core/execution_context/window_agent_factory.h
+@@ -33,14 +33,18 @@ class WindowAgentFactory final : public GarbageCollected<WindowAgentFactory> {
+ 
+   // Returns an instance of WindowAgent for `agent_cluster_key`.
+   //
+-  // Set |has_potential_universal_access_privilege| if an agent may be able to
+-  // access all other agents synchronously.
+-  // I.e. pass true to if either:
+-  //   * --disable-web-security is set,
+-  //   * --run-web-tests is set,
+-  //   * or, the Blink instance is running for Android WebView.
++  // Set |web_security_disabled| when the page has opted out of web security
++  // entirely (e.g. --disable-web-security, --run-web-tests). All frames will
++  // share a single universal-access WindowAgent.
++  //
++  // Set |allow_universal_access_from_file_urls| when the
++  // AllowUniversalAccessFromFileURLs setting is enabled. This only takes
++  // effect for `file:` scheme origins (i.e. when |agent_cluster_key| is a
++  // universal file agent key), routing them to the universal-access agent so
++  // they can synchronously script other origins in the same renderer.
+   WindowAgent* GetAgentForAgentClusterKey(
+-      bool has_potential_universal_access_privilege,
++      bool web_security_disabled,
++      bool allow_universal_access_from_file_urls,
+       const AgentClusterKey& agent_cluster_key);
+ 
+   void Trace(Visitor*) const;
+diff --git a/third_party/blink/renderer/core/loader/document_loader.cc b/third_party/blink/renderer/core/loader/document_loader.cc
+index cf5bda8696ca35bd2e37dc8578d72c94793972e3..83c542abb8a1b5d9b15584865aa1a15564410bf3 100644
+--- a/third_party/blink/renderer/core/loader/document_loader.cc
++++ b/third_party/blink/renderer/core/loader/document_loader.cc
+@@ -2582,22 +2582,14 @@ bool ShouldReuseDOMWindow(LocalDOMWindow* window,
+   return window->GetSecurityOrigin()->CanAccess(security_origin);
+ }
+ 
+-namespace {
+-
+-bool HasPotentialUniversalAccessPrivilege(LocalFrame* frame) {
+-  return !frame->GetSettings()->GetWebSecurityEnabled() ||
+-         frame->GetSettings()->GetAllowUniversalAccessFromFileURLs();
+-}
+-
+-}  // namespace
+-
+ WindowAgent* GetWindowAgentForAgentClusterKey(
+     LocalFrame* frame,
+     const AgentClusterKey& agent_cluster_key) {
+-  // TODO(keishi): Also check if AllowUniversalAccessFromFileURLs might
+-  // dynamically change.
++  // TODO(keishi): Also check if these settings might dynamically change.
+   return frame->window_agent_factory().GetAgentForAgentClusterKey(
+-      HasPotentialUniversalAccessPrivilege(frame), agent_cluster_key);
++      !frame->GetSettings()->GetWebSecurityEnabled(),
++      frame->GetSettings()->GetAllowUniversalAccessFromFileURLs(),
++      agent_cluster_key);
+ }
+ 
+ // Inheriting cases use their agent's AgentClusterKey value, which is set
+@@ -2695,17 +2687,14 @@ void DocumentLoader::InitializeWindow(Document* owner_document) {
+                             ->GetAgentClusterKey();
+ 
+     // Note: this code must be kept in sync with
+-    // WindowAgentFactory::GetAgentForOrigin(), as the two conditions below hand
+-    // out universal WindowAgent objects, and thus override the AgentClusterKey
+-    // provided by the browser process.
+-  } else if (HasPotentialUniversalAccessPrivilege(frame_.Get()) ||
++    // WindowAgentFactory::GetAgentForAgentClusterKey(), as the conditions below
++    // hand out universal WindowAgent objects, and thus override the
++    // AgentClusterKey provided by the browser process.
++  } else if (!frame_->GetSettings()->GetWebSecurityEnabled() ||
+              security_origin->IsLocal()) {
+-    // In this case we either have AllowUniversalAccessFromFileURLs enabled, or
+-    // WebSecurity is disabled, or it's a local scheme such as file://; any of
+-    // these cases forces us to use a common WindowAgent for all origins, so
+-    // don't attempt to pass the AgentClusterKey sent from the browser. Note:
+-    // AllowUniversalAccessFromFileURLs is deprecated as of Android R, so
+-    // eventually this use case will diminish.
++    // In this case either WebSecurity is disabled or it's a local scheme such
++    // as file://; either forces us to use a common WindowAgent, so don't
++    // attempt to pass the AgentClusterKey sent from the browser.
+     agent_cluster_key = AgentClusterKey::CreateUniversalFileAgent();
+   } else if (ShouldInheritAgentClusterKey(Url(), commit_reason_) &&
+              owner_document && owner_document->domWindow()) {
+diff --git a/third_party/blink/web_tests/http/tests/security/agent-universal-access-cross-origin-isolation.html b/third_party/blink/web_tests/http/tests/security/agent-universal-access-cross-origin-isolation.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..44f2fd9420cce0c5e33a806770f49bdc3fab92dd
+--- /dev/null
++++ b/third_party/blink/web_tests/http/tests/security/agent-universal-access-cross-origin-isolation.html
+@@ -0,0 +1,52 @@
++<!DOCTYPE html>
++<html>
++<head>
++<title>AllowUniversalAccessFromFileURLs must not break cross-origin isolation</title>
++<script src="/resources/testharness.js"></script>
++<script src="/resources/testharnessreport.js"></script>
++</head>
++<body>
++<script>
++// Regression test: AllowUniversalAccessFromFileURLs should only affect file:
++// scheme origins. Non-file origins must retain their cross-origin isolation
++// status (derived from COOP + COEP headers) regardless of this setting.
++
++test(() => {
++  // Verify baseline: this page is cross-origin isolated via headers.
++  assert_true(window.crossOriginIsolated,
++    'Page should be cross-origin isolated before enabling setting');
++}, 'Baseline: page is cross-origin isolated via COOP + COEP headers');
++
++test(() => {
++  internals.settings.setAllowUniversalAccessFromFileURLs(true);
++
++  // The setting should not retroactively change the isolation status of
++  // an already-loaded non-file document.
++  assert_true(window.crossOriginIsolated,
++    'crossOriginIsolated must remain true after enabling AllowUniversalAccessFromFileURLs');
++
++  internals.settings.setAllowUniversalAccessFromFileURLs(false);
++}, 'AllowUniversalAccessFromFileURLs does not affect crossOriginIsolated on non-file origin');
++
++async_test(t => {
++  internals.settings.setAllowUniversalAccessFromFileURLs(true);
++
++  // Load an iframe (same-origin, also served with COOP+COEP headers) and
++  // verify it is also cross-origin isolated.
++  let iframe = document.createElement('iframe');
++  iframe.addEventListener('load', t.step_func_done(() => {
++    assert_true(iframe.contentWindow.crossOriginIsolated,
++      'iframe crossOriginIsolated must be true');
++  }));
++  iframe.src =
++    'http://127.0.0.1:8000/security/resources/cross-origin-isolated-check.html';
++  document.body.appendChild(iframe);
++
++  t.add_cleanup(() => {
++    iframe.remove();
++    internals.settings.setAllowUniversalAccessFromFileURLs(false);
++  });
++}, 'Newly loaded iframe retains cross-origin isolation with AllowUniversalAccessFromFileURLs enabled');
++</script>
++</body>
++</html>
+diff --git a/third_party/blink/web_tests/http/tests/security/agent-universal-access-cross-origin-isolation.html.headers b/third_party/blink/web_tests/http/tests/security/agent-universal-access-cross-origin-isolation.html.headers
+new file mode 100644
+index 0000000000000000000000000000000000000000..63b60e490f47f4db77d33d7a4ca2f5b9a4181de8
+--- /dev/null
++++ b/third_party/blink/web_tests/http/tests/security/agent-universal-access-cross-origin-isolation.html.headers
+@@ -0,0 +1,2 @@
++Cross-Origin-Opener-Policy: same-origin
++Cross-Origin-Embedder-Policy: require-corp
+diff --git a/third_party/blink/web_tests/http/tests/security/resources/cross-origin-isolated-check.html b/third_party/blink/web_tests/http/tests/security/resources/cross-origin-isolated-check.html
+new file mode 100644
+index 0000000000000000000000000000000000000000..e18427b7d63085fc11a5aff643ac4b83958fbeb7
+--- /dev/null
++++ b/third_party/blink/web_tests/http/tests/security/resources/cross-origin-isolated-check.html
+@@ -0,0 +1,9 @@
++<!DOCTYPE html>
++<html>
++<body>
++<script>
++// Intentionally minimal. The parent test checks crossOriginIsolated via
++// iframe.contentWindow.crossOriginIsolated.
++</script>
++</body>
++</html>
+diff --git a/third_party/blink/web_tests/http/tests/security/resources/cross-origin-isolated-check.html.headers b/third_party/blink/web_tests/http/tests/security/resources/cross-origin-isolated-check.html.headers
+new file mode 100644
+index 0000000000000000000000000000000000000000..63b60e490f47f4db77d33d7a4ca2f5b9a4181de8
+--- /dev/null
++++ b/third_party/blink/web_tests/http/tests/security/resources/cross-origin-isolated-check.html.headers
+@@ -0,0 +1,2 @@
++Cross-Origin-Opener-Policy: same-origin
++Cross-Origin-Embedder-Policy: require-corp
