@@ -7,11 +7,15 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "base/files/file_util.h"
 #include "base/task/thread_pool.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/trace_event/trace_config.h"
+#include "components/heap_profiling/multi_process/client_connection_manager.h"
+#include "components/heap_profiling/multi_process/supervisor.h"
+#include "components/services/heap_profiling/public/cpp/settings.h"
 #include "content/public/browser/tracing_controller.h"
 #include "shell/browser/javascript_environment.h"
 #include "shell/common/gin_converters/callback_converter.h"
@@ -60,6 +64,7 @@ struct Converter<base::trace_event::TraceConfig> {
 namespace {
 
 using CompletionCallback = base::OnceCallback<void(const base::FilePath&)>;
+using ProfilingEnabledCallback = base::OnceClosure;
 
 std::optional<base::FilePath> CreateTemporaryFileOnIO() {
   base::FilePath temp_file_path;
@@ -128,6 +133,96 @@ v8::Local<v8::Promise> GetCategories(v8::Isolate* isolate) {
   return handle;
 }
 
+std::vector<ProfilingEnabledCallback>& GetProfilingEnabledCallbacks() {
+  static base::NoDestructor<std::vector<ProfilingEnabledCallback>> callbacks;
+  return *callbacks;
+}
+
+void OnSupervisorStarted() {
+  auto callbacks = std::exchange(GetProfilingEnabledCallbacks(), {});
+
+  for (auto& callback : callbacks) {
+    if (callback)
+      std::move(callback).Run();
+  }
+}
+
+void StartHeapProfilingSupervisor(ProfilingEnabledCallback callback,
+                                  heap_profiling::Mode mode,
+                                  heap_profiling::mojom::StackMode stackMode,
+                                  uint32_t samplingRate) {
+  auto* supervisor = heap_profiling::Supervisor::GetInstance();
+
+  if (supervisor->HasStarted()) {
+    if (callback)
+      std::move(callback).Run();
+    return;
+  }
+
+  auto& callbacks = GetProfilingEnabledCallbacks();
+  callbacks.push_back(std::move(callback));
+
+  // If we have previously called Start, but HasStarted hasn't become true yet,
+  // don't call Start again.
+  if (callbacks.size() > 1)
+    return;
+
+  supervisor->SetClientConnectionManagerConstructor(
+      [](base::WeakPtr<heap_profiling::Controller> controller_weak_ptr,
+         heap_profiling::Mode mode) {
+        return std::make_unique<heap_profiling::ClientConnectionManager>(
+            controller_weak_ptr, mode);
+      });
+
+  supervisor->Start(mode, stackMode, samplingRate,
+                    base::BindOnce(&OnSupervisorStarted));
+}
+
+v8::Local<v8::Promise> EnableHeapProfiling(
+    v8::Isolate* isolate,
+    std::optional<gin_helper::Dictionary> options) {
+#if defined(ADDRESS_SANITIZER)
+  // Memory sanitizers are using large memory shadow to keep track of memory
+  // state. Using memlog and memory sanitizers at the same time is slowing down
+  // user experience, causing the browser to be barely responsive. In theory,
+  // memlog and memory sanitizers are compatible and can run at the same time.
+  return gin_helper::Promise<void>::ResolvedPromise(isolate);
+#endif
+
+  gin_helper::Promise<void> promise(isolate);
+  v8::Local<v8::Promise> handle = promise.GetHandle();
+
+  heap_profiling::Mode mode = heap_profiling::Mode::kAll;
+  heap_profiling::mojom::StackMode stack_mode =
+      heap_profiling::mojom::StackMode::NATIVE_WITHOUT_THREAD_NAMES;
+  uint32_t sampling_rate = 1000000;
+
+  if (options) {
+    std::string mode_in;
+    std::string stack_mode_in;
+    std::optional<uint32_t> sampling_rate_in;
+
+    if (options->Get("mode", &mode_in)) {
+      mode = heap_profiling::ConvertStringToMode(mode_in);
+    }
+    if (options->Get("stackMode", &stack_mode_in)) {
+      stack_mode = heap_profiling::ConvertStringToStackMode(stack_mode_in);
+    }
+    if (options->GetOptional("samplingRate", &sampling_rate_in) &&
+        sampling_rate_in && sampling_rate_in.value() >= 1000 &&
+        sampling_rate_in.value() <= 10000000) {
+      sampling_rate = sampling_rate_in.value();
+    }
+  }
+
+  StartHeapProfilingSupervisor(
+      base::BindOnce(gin_helper::Promise<void>::ResolvePromise,
+                     std::move(promise)),
+      mode, stack_mode, sampling_rate);
+
+  return handle;
+}
+
 v8::Local<v8::Promise> StartTracing(
     v8::Isolate* isolate,
     const base::trace_event::TraceConfig& trace_config) {
@@ -181,6 +276,7 @@ void Initialize(v8::Local<v8::Object> exports,
   dict.SetMethod("startRecording", &StartTracing);
   dict.SetMethod("stopRecording", &StopRecording);
   dict.SetMethod("getTraceBufferUsage", &GetTraceBufferUsage);
+  dict.SetMethod("enableHeapProfiling", &EnableHeapProfiling);
 }
 
 }  // namespace

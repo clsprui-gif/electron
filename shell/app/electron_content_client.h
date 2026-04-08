@@ -33,6 +33,9 @@ class ElectronContentClient : public content::ContentClient {
   void AddContentDecryptionModules(
       std::vector<content::CdmInfo>* cdms,
       std::vector<media::CdmHostFilePath>* cdm_host_file_paths) override;
+  void ExposeInterfacesToBrowser(
+      scoped_refptr<base::SequencedTaskRunner> io_task_runner,
+      mojo::BinderMap* binders) override;
 };
 
 }  // namespace electron

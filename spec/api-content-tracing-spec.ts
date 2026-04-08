@@ -1,12 +1,15 @@
-import { app, contentTracing, TraceConfig, TraceCategoriesAndOptions } from 'electron/main';
+import { app, contentTracing, EnableHeapProfilingOptions, TraceConfig, TraceCategoriesAndOptions } from 'electron/main';
 
 import { expect } from 'chai';
 
+import { once } from 'node:events';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 
-import { ifdescribe } from './lib/spec-helpers';
+import { ifdescribe, ifit, startRemoteControlApp } from './lib/spec-helpers';
+
+const fixturesPath = path.resolve(__dirname, 'fixtures');
 
 // FIXME: The tests are skipped on linux arm/arm64
 ifdescribe(!(['arm', 'arm64'].includes(process.arch)) || (process.platform !== 'linux'))('contentTracing', () => {
@@ -159,6 +162,189 @@ ifdescribe(!(['arm', 'arm64'].includes(process.arch)) || (process.platform !== '
       const result = await contentTracing.getTraceBufferUsage();
       expect(result).to.have.property('percentage').that.is.a('number');
       expect(result.percentage).to.equal(0);
+    });
+  });
+
+  describe('enableHeapProfiling', () => {
+    const checkForHeapDumps = async (options?: EnableHeapProfilingOptions, repetitions: number = 1) => {
+      const rc = await startRemoteControlApp();
+
+      const { hasBrowserProcessHeapDump, hasRendererProcessHeapDump, hasUtilityProcessHeapDump } = await rc.remotely(async (utilityProcessPath: string, options: EnableHeapProfilingOptions | undefined, repetitions: number) => {
+        const { contentTracing, BrowserWindow, utilityProcess } = require('electron');
+        const { once } = require('node:events');
+        const fs = require('node:fs');
+        const process = require('node:process');
+        const { setTimeout } = require('node:timers/promises');
+
+        const isEventWithNonEmptyHeapDumpForProcess = (event: any, pid: number) =>
+          event.cat === 'disabled-by-default-memory-infra' &&
+          event.name === 'periodic_interval' &&
+          event.pid === pid &&
+          event.args.dumps.level_of_detail === 'detailed' &&
+          event.args.dumps.process_mmaps?.vm_regions.length > 0 &&
+          Object.values(event.args.dumps.allocators).some((allocator: any) => allocator.attrs.size?.value !== "0") &&
+          Object.values(event.args.dumps.heaps_v2.allocators).some((allocator: any) => allocator.counts.length > 0 && allocator.nodes.length > 0 && allocator.sizes.length > 0);
+
+        const hasNonEmptyHeapDumpForProcess = (parsedTrace: any, pid: number) =>
+          parsedTrace.traceEvents.some((event: any) => isEventWithNonEmptyHeapDumpForProcess(event, pid));
+
+        // If we have multiple repetitions, launch promises both in parallel and sequentially
+        for (let i = 0; i < repetitions; i++) {
+          await Promise.all(
+            new Array(repetitions).fill(0).map(() => contentTracing.enableHeapProfiling(options))
+          );
+        }
+
+        const interval = 1000;
+        await contentTracing.startRecording({
+          included_categories: ["disabled-by-default-memory-infra"],
+          excluded_categories: ["*"],
+          memory_dump_config: {
+            triggers: [
+              { mode: "detailed", periodic_interval_ms: interval },
+            ],
+          },
+        });
+
+        // Launch a renderer process
+        const window = new BrowserWindow({ show: false });
+        await window.webContents.loadURL('about:blank');
+
+        // Launch a utility process
+        const utility = utilityProcess.fork(utilityProcessPath);
+        await once(utility, 'spawn');
+
+        // Collect heap dumps
+        await setTimeout(2 * interval);
+
+        const path = await contentTracing.stopRecording();
+        const data = fs.readFileSync(path, 'utf8');
+        const parsed = JSON.parse(data);
+
+        const hasBrowserProcessHeapDump = hasNonEmptyHeapDumpForProcess(parsed, process.pid);
+        const hasRendererProcessHeapDump = hasNonEmptyHeapDumpForProcess(parsed, window.webContents.getOSProcessId());
+        const hasUtilityProcessHeapDump = hasNonEmptyHeapDumpForProcess(parsed, utility.pid);
+
+        global.setTimeout(() => require('electron').app.quit());
+
+        return {
+          hasBrowserProcessHeapDump,
+          hasRendererProcessHeapDump,
+          hasUtilityProcessHeapDump
+        };
+      }, path.join(fixturesPath, 'api', 'content-tracing', 'utility.js'), options, repetitions);
+
+      const [code] = await once(rc.process, 'exit');
+      expect(code).to.equal(0);
+
+      return {
+        hasBrowserProcessHeapDump,
+        hasRendererProcessHeapDump,
+        hasUtilityProcessHeapDump
+      };
+    };
+
+    it('does not include heap dumps when enableHeapProfiling is not called', async function () {
+      const { hasBrowserProcessHeapDump, hasRendererProcessHeapDump, hasUtilityProcessHeapDump } = await checkForHeapDumps(undefined, 0);
+
+      expect(hasBrowserProcessHeapDump).to.be.false();
+      expect(hasRendererProcessHeapDump).to.be.false();
+      expect(hasUtilityProcessHeapDump).to.be.false();
+    });
+
+    ifit(!process.env.IS_ASAN)('includes heap dumps for browser process when called with { mode: "browser" }', async function () {
+      const { hasBrowserProcessHeapDump, hasRendererProcessHeapDump, hasUtilityProcessHeapDump } = await checkForHeapDumps({ mode: 'browser' });
+
+      expect(hasBrowserProcessHeapDump).to.be.true();
+      expect(hasRendererProcessHeapDump).to.be.false();
+      expect(hasUtilityProcessHeapDump).to.be.false();
+    });
+
+    ifit(!process.env.IS_ASAN)('includes heap dumps for renderer processes when called with { mode: "all-renderers" }', async function () {
+      const { hasBrowserProcessHeapDump, hasRendererProcessHeapDump, hasUtilityProcessHeapDump } = await checkForHeapDumps({ mode: 'all-renderers' });
+
+      expect(hasBrowserProcessHeapDump).to.be.false();
+      expect(hasRendererProcessHeapDump).to.be.true();
+      expect(hasUtilityProcessHeapDump).to.be.false();
+    });
+
+    ifit(!process.env.IS_ASAN)('includes heap dumps for utility processes when called with { mode: "all-utilities" }', async function () {
+      const { hasBrowserProcessHeapDump, hasRendererProcessHeapDump, hasUtilityProcessHeapDump } = await checkForHeapDumps({ mode: 'all-utilities' });
+
+      expect(hasBrowserProcessHeapDump).to.be.false();
+      expect(hasRendererProcessHeapDump).to.be.false();
+      expect(hasUtilityProcessHeapDump).to.be.true();
+    });
+
+    ifit(!process.env.IS_ASAN)('includes heap dumps for browser, renderer, and utility processes when called with { mode: "all" }', async function () {
+      const { hasBrowserProcessHeapDump, hasRendererProcessHeapDump, hasUtilityProcessHeapDump } = await checkForHeapDumps({ mode: 'all' });
+
+      expect(hasBrowserProcessHeapDump).to.be.true();
+      expect(hasRendererProcessHeapDump).to.be.true();
+      expect(hasUtilityProcessHeapDump).to.be.true();
+    });
+
+    ifit(!process.env.IS_ASAN)('includes heap dumps for browser, renderer, and utility processes when called without options', async function () {
+      const { hasBrowserProcessHeapDump, hasRendererProcessHeapDump, hasUtilityProcessHeapDump } = await checkForHeapDumps();
+
+      expect(hasBrowserProcessHeapDump).to.be.true();
+      expect(hasRendererProcessHeapDump).to.be.true();
+      expect(hasUtilityProcessHeapDump).to.be.true();
+    });
+
+    ifit(!process.env.IS_ASAN)('can be called multiple times right after each other', async function () {
+      const { hasBrowserProcessHeapDump, hasRendererProcessHeapDump, hasUtilityProcessHeapDump } = await checkForHeapDumps({ mode: 'all' }, 5);
+
+      expect(hasBrowserProcessHeapDump).to.be.true();
+      expect(hasRendererProcessHeapDump).to.be.true();
+      expect(hasUtilityProcessHeapDump).to.be.true();
+    });
+
+    ifit(!process.env.IS_ASAN)('accepts valid options', async function () {
+      const { hasBrowserProcessHeapDump, hasRendererProcessHeapDump, hasUtilityProcessHeapDump } = await checkForHeapDumps({
+        mode: 'all',
+        stackMode: 'native-with-thread-names',
+        samplingRate: 100000
+      });
+
+      expect(hasBrowserProcessHeapDump).to.be.true();
+      expect(hasRendererProcessHeapDump).to.be.true();
+      expect(hasUtilityProcessHeapDump).to.be.true();
+    });
+
+    ifit(!process.env.IS_ASAN)('does not crash when invalid options are passed', async function () {
+      let result = await checkForHeapDumps({
+        // @ts-expect-error Invalid mode
+        mode: 'invalid',
+        // @ts-expect-error Invalid stack mode
+        stackMode: 'invalid',
+        samplingRate: -1000
+      });
+
+      expect(result.hasBrowserProcessHeapDump).to.be.true();
+      expect(result.hasRendererProcessHeapDump).to.be.true();
+      expect(result.hasUtilityProcessHeapDump).to.be.true();
+
+      result = await checkForHeapDumps({
+        // @ts-expect-error Invalid mode
+        mode: { invalid: true },
+        // @ts-expect-error Invalid stack mode
+        stackMode: 999,
+        // @ts-expect-error Invalid sampling rate
+        samplingRate: "invalid"
+      });
+
+      expect(result.hasBrowserProcessHeapDump).to.be.true();
+      expect(result.hasRendererProcessHeapDump).to.be.true();
+      expect(result.hasUtilityProcessHeapDump).to.be.true();
+    });
+
+    ifit(!!process.env.IS_ASAN)('does not include heap dumps in ASAN builds', async function () {
+      const { hasBrowserProcessHeapDump, hasRendererProcessHeapDump, hasUtilityProcessHeapDump } = await checkForHeapDumps();
+
+      expect(hasBrowserProcessHeapDump).to.be.false();
+      expect(hasRendererProcessHeapDump).to.be.false();
+      expect(hasUtilityProcessHeapDump).to.be.false();
     });
   });
 
