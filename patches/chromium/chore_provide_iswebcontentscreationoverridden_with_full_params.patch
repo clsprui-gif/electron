@@ -80,10 +80,10 @@ index 39fa45f0a0f9076bd7ac0be6f455dd540a276512..3d0381d463eed73470b28085830f2a23
        content::WebContents* source,
        const content::OpenURLParams& params,
 diff --git a/chrome/browser/ui/browser.cc b/chrome/browser/ui/browser.cc
-index 8f8852b2af1acfa4ec985fd1c8b50563b991b12a..c2f2903545b191c5ab13462bf330efce37d7d08c 100644
+index 4131009ba3183107ffadc80dcfab67e572318a2b..30925d2b0b5f05149bd5e4c46a663d192a03f7e9 100644
 --- a/chrome/browser/ui/browser.cc
 +++ b/chrome/browser/ui/browser.cc
-@@ -2310,7 +2310,8 @@ bool Browser::IsWebContentsCreationOverridden(
+@@ -2305,7 +2305,8 @@ bool Browser::IsWebContentsCreationOverridden(
      content::mojom::WindowContainerType window_container_type,
      const GURL& opener_url,
      const std::string& frame_name,
@@ -93,7 +93,7 @@ index 8f8852b2af1acfa4ec985fd1c8b50563b991b12a..c2f2903545b191c5ab13462bf330efce
    if (HasActorTaskPreventingNewWebContents(profile(), opener)) {
      // If an ExecutionEngine is acting on the opener, prevent it from creating a
      // new WebContents. We'll instead force the navigation to happen in the same
-@@ -2323,7 +2324,7 @@ bool Browser::IsWebContentsCreationOverridden(
+@@ -2318,7 +2319,7 @@ bool Browser::IsWebContentsCreationOverridden(
    return (window_container_type ==
                content::mojom::WindowContainerType::BACKGROUND &&
            ShouldCreateBackgroundContents(source_site_instance, opener_url,
@@ -103,10 +103,10 @@ index 8f8852b2af1acfa4ec985fd1c8b50563b991b12a..c2f2903545b191c5ab13462bf330efce
  
  WebContents* Browser::CreateCustomWebContents(
 diff --git a/chrome/browser/ui/browser.h b/chrome/browser/ui/browser.h
-index 7c3475c86ce0f3d813066b66806487e38810d5e6..fe270d5328e718546df92cc25a3e65e5cd358fdf 100644
+index 44972993ec68cb666981c3553f0fa610abe09a0d..52c5fd33e7f1ef4919a68bad0c002307b46cb8ea 100644
 --- a/chrome/browser/ui/browser.h
 +++ b/chrome/browser/ui/browser.h
-@@ -915,8 +915,7 @@ class Browser : public TabStripModelObserver,
+@@ -911,8 +911,7 @@ class Browser : public TabStripModelObserver,
        content::SiteInstance* source_site_instance,
        content::mojom::WindowContainerType window_container_type,
        const GURL& opener_url,
@@ -145,10 +145,10 @@ index 3fc06be01f20e8cd314d95d73a3f58c2f0742fe9..c07910ae59a185442f37ea6e7b96fdf3
    // The profile used for the presentation.
    raw_ptr<Profile, DanglingUntriaged> otr_profile_;
 diff --git a/chrome/browser/ui/views/hats/hats_next_web_dialog.cc b/chrome/browser/ui/views/hats/hats_next_web_dialog.cc
-index 783d05c39ecbe5e556af2e5fd8b4f30fb5aa1196..e1895bcf9d3c6818aa64b1479774a143dae74d53 100644
+index 24fd79d0a1ac1141ece5fbab3a906111dfd3aaaa..7a478a6ff970093c667f3a6c27cb1bc6e358756b 100644
 --- a/chrome/browser/ui/views/hats/hats_next_web_dialog.cc
 +++ b/chrome/browser/ui/views/hats/hats_next_web_dialog.cc
-@@ -104,8 +104,7 @@ class HatsNextWebDialog::HatsWebView : public views::WebView {
+@@ -105,8 +105,7 @@ class HatsNextWebDialog::HatsWebView : public views::WebView {
        content::SiteInstance* source_site_instance,
        content::mojom::WindowContainerType window_container_type,
        const GURL& opener_url,
@@ -223,10 +223,10 @@ index b969f1d97b7e3396119b579cfbe61e19ff7d2dd4..b8d6169652da28266a514938b45b39c5
    content::WebContents* AddNewContents(
        content::WebContents* source,
 diff --git a/content/browser/web_contents/web_contents_impl.cc b/content/browser/web_contents/web_contents_impl.cc
-index d43e75c20aca09080f4223d339c88381f030c504..8cd59445bae73ff0193e4512d7c36740cbad847f 100644
+index b685db38808da5af4e8be6fd876bbb7855a192b6..fef509c5f8139c782f0a518ebb20509b47537656 100644
 --- a/content/browser/web_contents/web_contents_impl.cc
 +++ b/content/browser/web_contents/web_contents_impl.cc
-@@ -5436,8 +5436,7 @@ FrameTree* WebContentsImpl::CreateNewWindow(
+@@ -5426,8 +5426,7 @@ FrameTree* WebContentsImpl::CreateNewWindow(
    if (delegate_ &&
        delegate_->IsWebContentsCreationOverridden(
            opener, source_site_instance, params.window_container_type,
@@ -251,10 +251,10 @@ index 51be0b86d083318f01a9ebe76fb7d1fb60cd72fd..02ec57eeb67dd5e5e0ff250853599c88
  }
  
 diff --git a/content/public/browser/web_contents_delegate.h b/content/public/browser/web_contents_delegate.h
-index 29c380d7845aab1a7b3417e0d3940ea00460260b..234d6d89d1c8c7f333b96f35dacb73daeecf7b17 100644
+index d39e0474fcc3779c806f77753e4867f8b6a56091..382b652c1e490e858238f2408d6bae41b95ccafd 100644
 --- a/content/public/browser/web_contents_delegate.h
 +++ b/content/public/browser/web_contents_delegate.h
-@@ -380,8 +380,7 @@ class CONTENT_EXPORT WebContentsDelegate {
+@@ -379,8 +379,7 @@ class CONTENT_EXPORT WebContentsDelegate {
        SiteInstance* source_site_instance,
        mojom::WindowContainerType window_container_type,
        const GURL& opener_url,
